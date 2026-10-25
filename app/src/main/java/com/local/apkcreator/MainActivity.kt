@@ -2,11 +2,12 @@ package com.local.apkcreator
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
+import android.util.Base64
 import android.webkit.JavascriptInterface
-import android.webkit.ValueCallback
-import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.result.contract.ActivityResultContracts
@@ -14,23 +15,61 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileOutputStream
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
-    private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
 
-    private val filePickerLauncher = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val uri = result.data?.data
-        if (result.resultCode == RESULT_OK && uri != null) {
-            fileUploadCallback?.onReceiveValue(arrayOf(uri))
-        } else {
-            fileUploadCallback?.onReceiveValue(null)
+    // Sélecteur natif d'icône Android (lit directement l'image via ContentResolver et la sauve en PNG)
+    private val iconPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                contentResolver.openInputStream(uri)?.use { input ->
+                    val original = BitmapFactory.decodeStream(input)
+                    if (original != null) {
+                        val scaled = Bitmap.createScaledBitmap(original, 192, 192, true)
+                        val iconFile = File(filesDir, "current_custom_icon.png")
+                        val bos = ByteArrayOutputStream()
+                        scaled.compress(Bitmap.CompressFormat.PNG, 100, bos)
+                        val pngBytes = bos.toByteArray()
+                        FileOutputStream(iconFile).use { it.write(pngBytes) }
+
+                        val b64 = Base64.encodeToString(pngBytes, Base64.NO_WRAP)
+                        val dataUri = "data:image/png;base64,$b64"
+                        runOnUiThread {
+                            webView.evaluateJavascript("window.onNativeIconPicked('$dataUri');", null)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
-        fileUploadCallback = null
+    }
+
+    // Sélecteur natif de fichier HTML local
+    private val htmlPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                contentResolver.openInputStream(uri)?.use { input ->
+                    val htmlFile = File(filesDir, "current_local_index.html")
+                    FileOutputStream(htmlFile).use { out -> input.copyTo(out) }
+                    val name = uri.lastPathSegment?.substringAfterLast('/') ?: "index.html"
+                    runOnUiThread {
+                        webView.evaluateJavascript("window.onNativeHtmlPicked('$name');", null)
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -38,6 +77,9 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         window.statusBarColor = 0xFF2B2D31.toInt()
         window.navigationBarColor = 0xFF222327.toInt()
+
+        // Réinitialise l'icône temporaire au démarrage
+        File(filesDir, "current_custom_icon.png").delete()
 
         webView = WebView(this)
         setContentView(webView)
@@ -50,27 +92,31 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.webViewClient = WebViewClient()
-        webView.webChromeClient = object : WebChromeClient() {
-            override fun onShowFileChooser(
-                vw: WebView?,
-                filePathCallback: ValueCallback<Array<Uri>>?,
-                fileChooserParams: FileChooserParams?
-            ): Boolean {
-                fileUploadCallback?.onReceiveValue(null)
-                fileUploadCallback = filePathCallback
-                val intent = fileChooserParams?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
-                    type = "*/*"
-                }
-                filePickerLauncher.launch(intent)
-                return true
-            }
-        }
-
         webView.addJavascriptInterface(LocalBridge(), "AndroidBridge")
         webView.loadUrl("file:///android_asset/ui/index.html")
     }
 
     inner class LocalBridge {
+
+        @JavascriptInterface
+        fun pickAppIconNative() {
+            runOnUiThread {
+                iconPickerLauncher.launch("image/*")
+            }
+        }
+
+        @JavascriptInterface
+        fun pickLocalHtmlNative() {
+            runOnUiThread {
+                htmlPickerLauncher.launch("*/*")
+            }
+        }
+
+        @JavascriptInterface
+        fun clearCustomIcon() {
+            File(filesDir, "current_custom_icon.png").delete()
+            File(filesDir, "current_local_index.html").delete()
+        }
 
         @JavascriptInterface
         fun buildLocalArtifact(configJsonStr: String): String {
@@ -94,8 +140,9 @@ class MainActivity : AppCompatActivity() {
                     }
                     else -> {
                         val apkFile = File(outDir, "${safeFile}.apk")
-                        LocalArtifactBuilder.buildSignedWebViewApkOrBundle(this@MainActivity, cfg, apkFile)
-                        "APK '${rawName}' généré avec son icône et son nom : ${apkFile.name}"
+                        val iconUsed = LocalArtifactBuilder.buildSignedWebViewApkOrBundle(this@MainActivity, cfg, apkFile)
+                        val iconMsg = if (iconUsed) "avec votre logo personnalisé" else "avec le logo par défaut"
+                        "APK '${rawName}' généré $iconMsg : ${apkFile.name}"
                     }
                 }
             } catch (e: Exception) {

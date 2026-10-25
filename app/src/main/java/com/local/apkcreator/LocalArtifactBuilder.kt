@@ -1,21 +1,15 @@
 package com.local.apkcreator
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.util.Base64
 import com.android.apksig.ApkSigner
 import org.bouncycastle.asn1.x500.X500Name
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.math.BigInteger
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.security.KeyPairGenerator
 import java.security.PrivateKey
 import java.security.cert.X509Certificate
@@ -60,19 +54,13 @@ object LocalArtifactBuilder {
         return Pair(customPrivateKey!!, customCert!!)
     }
 
-    /**
-     * Remplace dans le binaire AXML AndroidManifest.xml une chaîne UTF-16LE ou UTF-8
-     * en mettant à jour sa longueur exacte et en complétant le reste avec des octets nuls (0x00)
-     * afin de préserver l'alignement du StringPool binaire Android.
-     */
     private fun patchBinaryManifestString(data: ByteArray, placeholder: String, newValue: String) {
         val safeVal = newValue.take(placeholder.length)
 
-        // 1. Recherche et patch UTF-16LE (format standard de AndroidManifest.xml compilé par AAPT2)
+        // 1. Patch UTF-16LE
         val searchUtf16 = placeholder.toByteArray(Charsets.UTF_16LE)
         var idx = indexOfBytes(data, searchUtf16)
         while (idx != -1) {
-            // Les 2 octets précédant la chaîne dans le StringPool UTF-16LE contiennent la longueur en caractères (uint16 LE)
             if (idx >= 2) {
                 val oldLen = (data[idx - 2].toInt() and 0xFF) or ((data[idx - 1].toInt() and 0xFF) shl 8)
                 if (oldLen == placeholder.length) {
@@ -87,7 +75,7 @@ object LocalArtifactBuilder {
             idx = indexOfBytes(data, searchUtf16, idx + searchUtf16.size)
         }
 
-        // 2. Recherche et patch UTF-8 (au cas où AAPT2 encode en UTF-8)
+        // 2. Patch UTF-8
         val searchUtf8 = placeholder.toByteArray(Charsets.UTF_8)
         var idx8 = indexOfBytes(data, searchUtf8)
         while (idx8 != -1) {
@@ -118,23 +106,6 @@ object LocalArtifactBuilder {
         return -1
     }
 
-    /**
-     * Convertit l'icône importée par l'utilisateur en PNG 192x192 valide.
-     */
-    private fun decodeUserIconToPng(iconBase64: String): ByteArray? {
-        if (!iconBase64.contains(",")) return null
-        return try {
-            val raw = Base64.decode(iconBase64.substringAfter(","), Base64.DEFAULT)
-            val bmp = BitmapFactory.decodeByteArray(raw, 0, raw.size) ?: return null
-            val scaled = Bitmap.createScaledBitmap(bmp, 192, 192, true)
-            val bos = ByteArrayOutputStream()
-            scaled.compress(Bitmap.CompressFormat.PNG, 100, bos)
-            bos.toByteArray()
-        } catch (_: Exception) {
-            null
-        }
-    }
-
     private fun sanitizePackageName(rawPkg: String, appName: String): String {
         val cleaned = rawPkg.trim().lowercase().replace(Regex("[^a-z0-9_.]"), "")
         if (cleaned.contains(".") && cleaned.first().isLetter()) {
@@ -157,7 +128,7 @@ object LocalArtifactBuilder {
         zipOut.closeEntry()
     }
 
-    fun buildSignedWebViewApkOrBundle(context: Context, cfg: JSONObject, outSignedFile: File) {
+    fun buildSignedWebViewApkOrBundle(context: Context, cfg: JSONObject, outSignedFile: File): Boolean {
         val tempUnsigned = File(context.cacheDir, "temp_unsigned.apk")
         val baseApk = File(context.cacheDir, "template_base.apk")
 
@@ -168,7 +139,14 @@ object LocalArtifactBuilder {
         val userAppName = cfg.optString("appName", "MonApp").ifBlank { "MonApp" }
         val userPkgName = sanitizePackageName(cfg.optString("packageName", ""), userAppName)
         val userVerName = cfg.optString("appVersion", "1.0.0").ifBlank { "1.0.0" }
-        val customIconPng = decodeUserIconToPng(cfg.optString("iconBase64", ""))
+
+        // Lecture directe du fichier PNG sauvegardé par le sélecteur natif Kotlin
+        val nativeIconFile = File(context.filesDir, "current_custom_icon.png")
+        val customIconPng: ByteArray? = if (nativeIconFile.exists() && nativeIconFile.length() > 0) {
+            nativeIconFile.readBytes()
+        } else null
+
+        var iconReplaced = false
 
         ZipFile(baseApk).use { zipIn ->
             ZipOutputStream(FileOutputStream(tempUnsigned)).use { zipOut ->
@@ -179,7 +157,7 @@ object LocalArtifactBuilder {
 
                     val entryBytes = zipIn.getInputStream(entry).use { it.readBytes() }
 
-                    // 1. Patch binaire de AndroidManifest.xml (Nom de l'app + Package + Version)
+                    // 1. Patch binaire AndroidManifest.xml
                     if (entry.name == "AndroidManifest.xml") {
                         patchBinaryManifestString(entryBytes, TPL_NAME, userAppName)
                         patchBinaryManifestString(entryBytes, TPL_PKG, userPkgName)
@@ -190,13 +168,20 @@ object LocalArtifactBuilder {
                         continue
                     }
 
-                    // 2. Remplacement de l'icône de l'application si l'utilisateur a importé une icône
+                    // 2. Remplacement de toutes les occurrences de app_icon.png (drawable et mipmap)
                     if (customIconPng != null && entry.name.endsWith("app_icon.png")) {
-                        writeStoredEntry(zipOut, entry.name, customIconPng)
+                        if (entry.method == ZipEntry.STORED) {
+                            writeStoredEntry(zipOut, entry.name, customIconPng)
+                        } else {
+                            zipOut.putNextEntry(ZipEntry(entry.name))
+                            zipOut.write(customIconPng)
+                            zipOut.closeEntry()
+                        }
+                        iconReplaced = true
                         continue
                     }
 
-                    // 3. Copie à l'identique (en conservant STORED pour resources.arsc et les libs)
+                    // 3. Copie standard des autres entrées
                     if (entry.method == ZipEntry.STORED) {
                         writeStoredEntry(zipOut, entry.name, entryBytes)
                     } else {
@@ -206,12 +191,12 @@ object LocalArtifactBuilder {
                     }
                 }
 
-                // Injection de la configuration JSON complète
+                // Injection de app_config.json
                 zipOut.putNextEntry(ZipEntry("assets/app_config.json"))
                 zipOut.write(cfg.toString(2).toByteArray(Charsets.UTF_8))
                 zipOut.closeEntry()
 
-                // Injection de l'icône aussi dans assets pour le Splash Screen
+                // Injection de l'icône personnalisée dans assets/custom_icon.png pour le Splash Screen
                 if (customIconPng != null) {
                     zipOut.putNextEntry(ZipEntry("assets/custom_icon.png"))
                     zipOut.write(customIconPng)
@@ -219,11 +204,10 @@ object LocalArtifactBuilder {
                 }
 
                 // Injection du fichier HTML local si sélectionné
-                val localB64 = cfg.optString("localFileBase64", "")
-                if (localB64.contains(",")) {
-                    val raw = Base64.decode(localB64.substringAfter(","), Base64.DEFAULT)
+                val nativeHtmlFile = File(context.filesDir, "current_local_index.html")
+                if (nativeHtmlFile.exists()) {
                     zipOut.putNextEntry(ZipEntry("assets/local_index.html"))
-                    zipOut.write(raw)
+                    zipOut.write(nativeHtmlFile.readBytes())
                     zipOut.closeEntry()
                 }
             }
@@ -240,6 +224,7 @@ object LocalArtifactBuilder {
             .sign()
 
         tempUnsigned.delete()
+        return iconReplaced
     }
 
     fun buildAndroidStudioZip(cfg: JSONObject, outZipFile: File) {

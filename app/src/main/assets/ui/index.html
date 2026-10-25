@@ -52,7 +52,7 @@
   .field .select-arrow { position: absolute; right: 14px; pointer-events: none; color: var(--text-muted); font-size: 11px; }
   .field .icon-right { color: #D0D3D9; margin-left: 8px; cursor: pointer; }
 
-  .btn-outline-field { display: flex; align-items: center; justify-content: center; gap: 8px; background: var(--bg-input); border: 1px solid var(--border-color); border-radius: 12px; height: 52px; color: var(--text-main); font-weight: 600; font-size: 13.5px; cursor: pointer; }
+  .btn-outline-field { display: flex; align-items: center; justify-content: center; gap: 8px; background: var(--bg-input); border: 1px solid var(--border-color); border-radius: 12px; height: 52px; color: var(--text-main); font-weight: 600; font-size: 13.5px; cursor: pointer; padding: 0 10px; }
   .btn-primary-large { width: 100%; height: 54px; background: var(--accent); border: none; border-radius: 16px; color: #fff; font-size: 15px; font-weight: 700; letter-spacing: 0.4px; cursor: pointer; margin-top: 4px; margin-bottom: 24px; }
 
   .menu-empty { height: calc(100vh - 180px); display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
@@ -65,7 +65,7 @@
   .splash-inputs { flex: 1; display: flex; flex-direction: column; gap: 12px; }
   .phone-preview { width: 78px; background: #FFFFFF; border-radius: 12px; border: 2px solid #45484F; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; padding: 6px; }
   .phone-speaker { width: 20px; height: 3px; background: #D8D8D8; border-radius: 2px; position: absolute; top: 7px; }
-  .phone-preview img, .phone-preview svg { width: 32px; height: 32px; object-fit: contain; border-radius: 6px; }
+  .phone-preview img, .phone-preview svg { width: 34px; height: 34px; object-fit: contain; border-radius: 6px; }
 
   .plus-square { width: 32px; height: 32px; border-radius: 8px; background: #35383F; border: 1px solid var(--border-color); color: #fff; font-size: 18px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
   .empty-status { text-align: center; color: var(--text-muted); font-size: 13px; padding: 14px 0 8px 0; }
@@ -150,7 +150,7 @@
           <span class="icon-right">🔒</span>
         </div>
         <div class="btn-outline-field" id="localFieldBox" style="display:none;" onclick="pickLocalFolder()">
-          <span>📁 Sélectionner fichier HTML ou archive ZIP</span>
+          <span>📁 Sélectionner fichier HTML</span>
           <span id="localFileName" style="color:var(--accent);font-size:12px;"></span>
         </div>
 
@@ -162,6 +162,7 @@
         <div class="grid-2">
           <div class="field"><input type="text" id="packageName" placeholder="Nom du package"></div>
           <div class="btn-outline-field" onclick="pickAppIcon()">
+            <img id="btnIconThumb" src="" style="display:none;width:24px;height:24px;border-radius:5px;object-fit:cover;">
             <span id="iconBtnLabel">⬆️ Importer l'icône</span>
           </div>
         </div>
@@ -455,9 +456,6 @@
     </div>
   </div>
 
-  <input type="file" id="hiddenIconInput" accept="image/*" style="display:none" onchange="onIconSelected(event)">
-  <input type="file" id="hiddenLocalInput" accept=".html,.htm,.zip" style="display:none" onchange="onLocalFileSelected(event)">
-
 <script>
   const EXTRA_PERMISSIONS = [
     "CAMERA", "ACCESS_FINE_LOCATION", "RECORD_AUDIO",
@@ -468,8 +466,7 @@
   let state = {
     sourceMode: "url",
     exportFormat: "apk",
-    iconBase64: "",
-    localFileBase64: "",
+    hasCustomIcon: false,
     localFileName: "",
     menuType: null,
     menuItems: [],
@@ -605,29 +602,33 @@
     document.getElementById('keyStatusSub').innerText = "Votre fichier .jks local sera utilisé pour signer l'APK.";
   }
 
-  function pickAppIcon() { document.getElementById('hiddenIconInput').click(); }
-  function onIconSelected(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = function(ev) {
-      state.iconBase64 = ev.target.result;
-      document.getElementById('splashIconHolder').innerHTML = `<img src="${state.iconBase64}">`;
-      document.getElementById('iconBtnLabel').innerText = "✅ Icône importée";
-    };
-    reader.readAsDataURL(file);
+  // NATIVE ANDROID ICON PICKER (Garantit à 100% que le logo est lu et stocké en PNG par Kotlin)
+  function pickAppIcon() {
+    if (window.AndroidBridge && window.AndroidBridge.pickAppIconNative) {
+      window.AndroidBridge.pickAppIconNative();
+    }
   }
 
-  function pickLocalFolder() { document.getElementById('hiddenLocalInput').click(); }
-  function onLocalFileSelected(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-    state.localFileName = file.name;
-    document.getElementById('localFileName').innerText = `(${file.name})`;
-    const reader = new FileReader();
-    reader.onload = function(ev) { state.localFileBase64 = ev.target.result; };
-    reader.readAsDataURL(file);
+  // Appelé directement par Kotlin dès que l'utilisateur a choisi son logo dans la galerie
+  window.onNativeIconPicked = function(dataUri) {
+    state.hasCustomIcon = true;
+    const thumb = document.getElementById('btnIconThumb');
+    thumb.src = dataUri;
+    thumb.style.display = 'inline-block';
+    document.getElementById('iconBtnLabel').innerText = "Icône prête ✓";
+    document.getElementById('splashIconHolder').innerHTML = `<img src="${dataUri}">`;
+  };
+
+  function pickLocalFolder() {
+    if (window.AndroidBridge && window.AndroidBridge.pickLocalHtmlNative) {
+      window.AndroidBridge.pickLocalHtmlNative();
+    }
   }
+
+  window.onNativeHtmlPicked = function(fileName) {
+    state.localFileName = fileName;
+    document.getElementById('localFileName').innerText = `(${fileName})`;
+  };
 
   function updateSplashPreview() {
     const hex = document.getElementById('splashBg').value.trim();
@@ -651,9 +652,7 @@
       packageName: document.getElementById('packageName').value.trim() || "com.webview.monapp",
       webUrl: document.getElementById('webUrl').value.trim() || "https://example.com",
       sourceMode: state.sourceMode,
-      localFileName: state.localFileName,
-      localFileBase64: state.localFileBase64,
-      iconBase64: state.iconBase64,
+      hasCustomIcon: state.hasCustomIcon,
       navBar: document.getElementById('navBar').value,
       statusBar: document.getElementById('statusBar').value,
       cacheMode: document.getElementById('cacheMode').value,
@@ -715,8 +714,12 @@
   function confirmNewProject() {
     document.querySelectorAll('input[type="text"]').forEach(i => i.value = '');
     resetMenu();
-    state.iconBase64 = "";
+    state.hasCustomIcon = false;
+    document.getElementById('btnIconThumb').style.display = 'none';
     document.getElementById('iconBtnLabel').innerText = "⬆️ Importer l'icône";
+    if (window.AndroidBridge && window.AndroidBridge.clearCustomIcon) {
+      window.AndroidBridge.clearCustomIcon();
+    }
     closeModal('modalNewProject');
   }
 
@@ -741,12 +744,12 @@
 
   function showGuide() {
     closeModal('modalDropdown');
-    alert("1. Remplissez l'URL, le Nom de l'app, le Nom du package et importez l'icône.\n2. Cliquez sur GÉNÉRER L'APK : le binaire AndroidManifest.xml et l'icône de votre APK sont patchés et signés 100% en local !");
+    alert("1. Remplissez l'URL, le Nom de l'app, le Nom du package et cliquez sur Importer l'icône.\n2. Si vous régénérez une app déjà installée, changez le Nom du package ou désinstallez l'ancienne version pour qu'Android rafraîchisse le cache de l'icône.");
   }
 
   function showAbout() {
     closeModal('modalDropdown');
-    alert("ApkCreator Local Edition v1.1.0\nPatch binaire AXML (Nom + Package + Icône) • 100% Local • Sans crédits.");
+    alert("ApkCreator Local Edition v1.2.0\nSélecteur d'icône natif Kotlin + Patch binaire AXML • 100% Local • Sans crédits.");
   }
 
   function generateProjectOutput() {

@@ -93,7 +93,6 @@ class TemplateWebViewActivity : AppCompatActivity() {
 
         mainFrame.addView(root)
 
-        // Splash Screen avec la couleur et l'icône importée
         if (cfg.optString("splashMode", "enabled") == "enabled") {
             val splashBgHex = cfg.optString("splashBg", "#FFFFFF")
             val splashColor = try { Color.parseColor(splashBgHex) } catch (_: Exception) { Color.WHITE }
@@ -105,7 +104,7 @@ class TemplateWebViewActivity : AppCompatActivity() {
                             setImageBitmap(BitmapFactory.decodeStream(inp))
                         }
                     } catch (_: Exception) {
-                        setImageResource(R.drawable.app_icon)
+                        setImageResource(R.mipmap.app_icon)
                     }
                     layoutParams = FrameLayout.LayoutParams(220, 220, Gravity.CENTER)
                 }
