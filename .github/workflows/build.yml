@@ -26,13 +26,17 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      - name: Generate Default PNG Icons
+        run: |
+          python3 generate_icons.py
+
       - name: Build WebView Template APK & Bundle into ApkCreator Assets
         run: |
           gradle :template:assembleRelease
           mkdir -p app/src/main/assets
           cp template/build/outputs/apk/release/template-release-unsigned.apk app/src/main/assets/template_base.apk
 
-      - name: Build ApkCreator Debug & Release APK
+      - name: Build ApkCreator APK
         run: |
           gradle :app:assembleDebug
 

@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.util.Base64
 import android.webkit.JavascriptInterface
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -78,28 +77,29 @@ class MainActivity : AppCompatActivity() {
             return try {
                 val cfg = JSONObject(configJsonStr)
                 val outDir = File(filesDir, "outputs").apply { mkdirs() }
-                val safeName = cfg.optString("appName", "MyApp").replace(Regex("[^a-zA-Z0-9_-]"), "_")
+                val rawName = cfg.optString("appName", "MonApp").ifBlank { "MonApp" }
+                val safeFile = rawName.replace(Regex("[^a-zA-Z0-9_-]"), "_")
                 val fmt = cfg.optString("exportFormat", "apk")
 
                 when (fmt) {
                     "src" -> {
-                        val zipFile = File(outDir, "${safeName}_SourceCode.zip")
-                        LocalArtifactBuilder.buildAndroidStudioZip(this@MainActivity, cfg, zipFile)
-                        "Archive Code Source générée en local : ${zipFile.name}"
+                        val zipFile = File(outDir, "${safeFile}_SourceCode.zip")
+                        LocalArtifactBuilder.buildAndroidStudioZip(cfg, zipFile)
+                        "Code Source généré : ${zipFile.name}"
                     }
                     "aab" -> {
-                        val aabFile = File(outDir, "${safeName}_release.aab")
+                        val aabFile = File(outDir, "${safeFile}_release.aab")
                         LocalArtifactBuilder.buildSignedWebViewApkOrBundle(this@MainActivity, cfg, aabFile)
-                        "Bundle AAB généré en local : ${aabFile.name}"
+                        "Bundle AAB généré : ${aabFile.name}"
                     }
                     else -> {
-                        val apkFile = File(outDir, "${safeName}_signed.apk")
+                        val apkFile = File(outDir, "${safeFile}.apk")
                         LocalArtifactBuilder.buildSignedWebViewApkOrBundle(this@MainActivity, cfg, apkFile)
-                        "APK signé généré 100% en local : ${apkFile.name}"
+                        "APK '${rawName}' généré avec son icône et son nom : ${apkFile.name}"
                     }
                 }
             } catch (e: Exception) {
-                "Erreur lors de la génération : ${e.message}"
+                "Erreur : ${e.message}"
             }
         }
 
@@ -133,13 +133,13 @@ class MainActivity : AppCompatActivity() {
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
             }
-            startActivity(Intent.createChooser(intent, "Ouvrir ou partager"))
+            startActivity(Intent.createChooser(intent, "Installer ou partager"))
         }
 
         @JavascriptInterface
         fun generateKeystore(cn: String, org: String, country: String, pass: String): String {
             return try {
-                LocalArtifactBuilder.generateCustomKeyData(this@MainActivity, cn, org, country)
+                LocalArtifactBuilder.generateCustomKeyData(cn, org, country)
                 "OK"
             } catch (e: Exception) {
                 e.message ?: "Error"
