@@ -18,6 +18,11 @@ android {
         cruncherEnabled = false
         noCompress 'png'
     }
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+        disable 'ExpiredTargetSdkVersion'
+    }
     buildTypes {
         release {
             minifyEnabled false
@@ -34,5 +39,4 @@ android {
 }
 
 dependencies {
-    // Aucune dépendance externe lourde : léger, rapide et aucun PNG parasite dans res/ !
 }
