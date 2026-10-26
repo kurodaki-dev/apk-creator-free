@@ -22,15 +22,16 @@ import java.io.FileOutputStream
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
+    private var lastPickedIconDataUri: String = ""
 
-    // Sélecteur natif d'icône Android (lit directement l'image via ContentResolver et la sauve en PNG)
     private val iconPickerLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         if (uri != null) {
             try {
                 contentResolver.openInputStream(uri)?.use { input ->
-                    val original = BitmapFactory.decodeStream(input)
+                    val rawBytes = input.readBytes()
+                    val original = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size)
                     if (original != null) {
                         val scaled = Bitmap.createScaledBitmap(original, 192, 192, true)
                         val iconFile = File(filesDir, "current_custom_icon.png")
@@ -40,9 +41,9 @@ class MainActivity : AppCompatActivity() {
                         FileOutputStream(iconFile).use { it.write(pngBytes) }
 
                         val b64 = Base64.encodeToString(pngBytes, Base64.NO_WRAP)
-                        val dataUri = "data:image/png;base64,$b64"
+                        lastPickedIconDataUri = "data:image/png;base64,$b64"
                         runOnUiThread {
-                            webView.evaluateJavascript("window.onNativeIconPicked('$dataUri');", null)
+                            webView.evaluateJavascript("window.onNativeIconPicked();", null)
                         }
                     }
                 }
@@ -52,7 +53,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Sélecteur natif de fichier HTML local
     private val htmlPickerLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -78,7 +78,6 @@ class MainActivity : AppCompatActivity() {
         window.statusBarColor = 0xFF2B2D31.toInt()
         window.navigationBarColor = 0xFF222327.toInt()
 
-        // Réinitialise l'icône temporaire au démarrage
         File(filesDir, "current_custom_icon.png").delete()
 
         webView = WebView(this)
@@ -106,6 +105,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun getCustomIconDataUri(): String {
+            return lastPickedIconDataUri
+        }
+
+        @JavascriptInterface
         fun pickLocalHtmlNative() {
             runOnUiThread {
                 htmlPickerLauncher.launch("*/*")
@@ -114,6 +118,7 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun clearCustomIcon() {
+            lastPickedIconDataUri = ""
             File(filesDir, "current_custom_icon.png").delete()
             File(filesDir, "current_local_index.html").delete()
         }
@@ -140,9 +145,9 @@ class MainActivity : AppCompatActivity() {
                     }
                     else -> {
                         val apkFile = File(outDir, "${safeFile}.apk")
-                        val iconUsed = LocalArtifactBuilder.buildSignedWebViewApkOrBundle(this@MainActivity, cfg, apkFile)
-                        val iconMsg = if (iconUsed) "avec votre logo personnalisé" else "avec le logo par défaut"
-                        "APK '${rawName}' généré $iconMsg : ${apkFile.name}"
+                        val countReplaced = LocalArtifactBuilder.buildSignedWebViewApkOrBundle(this@MainActivity, cfg, apkFile)
+                        val iconInfo = if (countReplaced > 0) "Logo personnalisé appliqué ($countReplaced res)" else "Logo par défaut"
+                        "APK '${rawName}' prêt à installer ($iconInfo) : ${apkFile.name}"
                     }
                 }
             } catch (e: Exception) {
@@ -168,19 +173,20 @@ class MainActivity : AppCompatActivity() {
             val f = File(File(filesDir, "outputs"), fileName)
             if (!f.exists()) return
             val uri = FileProvider.getUriForFile(this@MainActivity, "${packageName}.provider", f)
-            val intent = if (fileName.endsWith(".apk")) {
-                Intent(Intent.ACTION_VIEW).apply {
+            if (fileName.endsWith(".apk")) {
+                val installIntent = Intent(Intent.ACTION_VIEW).apply {
                     setDataAndType(uri, "application/vnd.android.package-archive")
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
+                startActivity(installIntent)
             } else {
-                Intent(Intent.ACTION_SEND).apply {
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "application/zip"
                     putExtra(Intent.EXTRA_STREAM, uri)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
+                startActivity(Intent.createChooser(shareIntent, "Partager"))
             }
-            startActivity(Intent.createChooser(intent, "Installer ou partager"))
         }
 
         @JavascriptInterface

@@ -6,14 +6,14 @@
     <application
         android:allowBackup="true"
         android:label="AppNamePlaceholder0000000000000000000000"
-        android:icon="@mipmap/app_icon"
-        android:roundIcon="@mipmap/app_icon"
+        android:icon="@drawable/app_icon"
+        android:roundIcon="@drawable/app_icon"
         android:usesCleartextTraffic="true"
-        android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
         <activity
             android:name="com.local.webviewtemplate.TemplateWebViewActivity"
             android:label="AppNamePlaceholder0000000000000000000000"
-            android:icon="@mipmap/app_icon"
+            android:icon="@drawable/app_icon"
             android:exported="true"
             android:configChanges="orientation|screenSize|keyboardHidden">
             <intent-filter>

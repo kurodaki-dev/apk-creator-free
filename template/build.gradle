@@ -10,7 +10,7 @@ android {
     defaultConfig {
         applicationId "com.apkcreator.tpl.pkg0000000000000000000000000000"
         minSdk 24
-        targetSdk 34
+        targetSdk 28
         versionCode 1
         versionName "1.0.0.00000000000000"
     }
@@ -34,6 +34,5 @@ android {
 }
 
 dependencies {
-    implementation 'androidx.core:core-ktx:1.12.0'
-    implementation 'androidx.appcompat:appcompat:1.6.1'
+    // Aucune dépendance externe lourde : léger, rapide et aucun PNG parasite dans res/ !
 }

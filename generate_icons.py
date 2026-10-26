@@ -44,14 +44,11 @@ def apkcreator_logo_pixel(x, y, w, h):
     return bg
 
 os.makedirs("app/src/main/res/drawable-nodpi", exist_ok=True)
-os.makedirs("template/src/main/res/drawable-nodpi", exist_ok=True)
-os.makedirs("template/src/main/res/mipmap-nodpi", exist_ok=True)
+os.makedirs("template/src/main/res/drawable", exist_ok=True)
 
 png_bytes = make_png(192, 192, apkcreator_logo_pixel)
 with open("app/src/main/res/drawable-nodpi/ic_apkcreator_logo.png", "wb") as f:
     f.write(png_bytes)
-with open("template/src/main/res/drawable-nodpi/app_icon.png", "wb") as f:
-    f.write(png_bytes)
-with open("template/src/main/res/mipmap-nodpi/app_icon.png", "wb") as f:
+with open("template/src/main/res/drawable/app_icon.png", "wb") as f:
     f.write(png_bytes)
 print("Generated default PNG icons successfully.")

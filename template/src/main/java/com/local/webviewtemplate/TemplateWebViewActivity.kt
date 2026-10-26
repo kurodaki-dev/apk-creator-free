@@ -1,6 +1,7 @@
 package com.local.webviewtemplate
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.graphics.BitmapFactory
 import android.graphics.Color
@@ -9,17 +10,19 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.View
+import android.view.WindowManager
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import androidx.appcompat.app.AppCompatActivity
 import org.json.JSONObject
 
-class TemplateWebViewActivity : AppCompatActivity() {
+class TemplateWebViewActivity : Activity() {
+
+    private lateinit var webView: WebView
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -39,9 +42,14 @@ class TemplateWebViewActivity : AppCompatActivity() {
             "landscape" -> requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         }
 
+        if (cfg.optString("statusBar", "show") == "hide") {
+            window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+        }
+
         val uiHex = cfg.optString("uiColor", "#222327")
         val themeColor = try { Color.parseColor(uiHex) } catch (_: Exception) { Color.DKGRAY }
         window.statusBarColor = themeColor
+        window.navigationBarColor = themeColor
 
         val mainFrame = FrameLayout(this)
 
@@ -53,13 +61,14 @@ class TemplateWebViewActivity : AppCompatActivity() {
             )
         }
 
-        val webView = WebView(this).apply {
+        webView = WebView(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
             )
             webViewClient = WebViewClient()
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            settings.allowFileAccess = true
             settings.setSupportZoom(cfg.optString("zoomMode") == "true")
             settings.builtInZoomControls = cfg.optString("zoomMode") == "true"
             settings.displayZoomControls = false
@@ -104,9 +113,9 @@ class TemplateWebViewActivity : AppCompatActivity() {
                             setImageBitmap(BitmapFactory.decodeStream(inp))
                         }
                     } catch (_: Exception) {
-                        setImageResource(R.mipmap.app_icon)
+                        setImageResource(R.drawable.app_icon)
                     }
-                    layoutParams = FrameLayout.LayoutParams(220, 220, Gravity.CENTER)
+                    layoutParams = FrameLayout.LayoutParams(240, 240, Gravity.CENTER)
                 }
                 addView(img)
             }
@@ -125,6 +134,15 @@ class TemplateWebViewActivity : AppCompatActivity() {
             val rawUrl = cfg.optString("webUrl", "https://example.com").trim()
             val finalUrl = if (!rawUrl.startsWith("http://") && !rawUrl.startsWith("https://")) "https://$rawUrl" else rawUrl
             webView.loadUrl(finalUrl)
+        }
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (this::webView.isInitialized && webView.canGoBack()) {
+            webView.goBack()
+        } else {
+            super.onBackPressed()
         }
     }
 }

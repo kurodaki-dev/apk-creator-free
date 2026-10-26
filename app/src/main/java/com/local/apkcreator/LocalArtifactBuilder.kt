@@ -10,6 +10,8 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.math.BigInteger
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.security.KeyPairGenerator
 import java.security.PrivateKey
 import java.security.cert.X509Certificate
@@ -54,37 +56,42 @@ object LocalArtifactBuilder {
         return Pair(customPrivateKey!!, customCert!!)
     }
 
+    /**
+     * Modifie proprement une chaîne dans le StringPool binaire AXML d'AndroidManifest.xml.
+     * Met à jour la taille exacte et place le terminateur nul (0x0000 ou 0x00) immédiatement après
+     * la nouvelle valeur pour que le PackageParser d'Android accepte l'APK à 100%.
+     */
     private fun patchBinaryManifestString(data: ByteArray, placeholder: String, newValue: String) {
         val safeVal = newValue.take(placeholder.length)
 
-        // 1. Patch UTF-16LE
+        // 1. Format UTF-16LE (Standard Android AXML)
         val searchUtf16 = placeholder.toByteArray(Charsets.UTF_16LE)
         var idx = indexOfBytes(data, searchUtf16)
         while (idx != -1) {
             if (idx >= 2) {
-                val oldLen = (data[idx - 2].toInt() and 0xFF) or ((data[idx - 1].toInt() and 0xFF) shl 8)
-                if (oldLen == placeholder.length) {
-                    data[idx - 2] = (safeVal.length and 0xFF).toByte()
-                    data[idx - 1] = ((safeVal.length shr 8) and 0xFF).toByte()
-                }
+                // Met à jour la longueur uint16 juste avant la chaîne
+                data[idx - 2] = (safeVal.length and 0xFF).toByte()
+                data[idx - 1] = ((safeVal.length shr 8) and 0xFF).toByte()
             }
             val repUtf16 = safeVal.toByteArray(Charsets.UTF_16LE)
-            for (i in searchUtf16.indices) {
+            // Efface toute la zone du placeholder + son terminateur nul avec des 0x00
+            for (i in 0 until searchUtf16.size) {
                 data[idx + i] = if (i < repUtf16.size) repUtf16[i] else 0
             }
             idx = indexOfBytes(data, searchUtf16, idx + searchUtf16.size)
         }
 
-        // 2. Patch UTF-8
+        // 2. Format UTF-8 (si AAPT2 utilise le flag UTF8_FLAG dans le StringPool)
         val searchUtf8 = placeholder.toByteArray(Charsets.UTF_8)
         var idx8 = indexOfBytes(data, searchUtf8)
         while (idx8 != -1) {
             val repUtf8 = safeVal.toByteArray(Charsets.UTF_8)
-            if (idx8 >= 2 && data[idx8 - 1].toInt() == placeholder.length) {
+            if (idx8 >= 2) {
+                // Dans un StringPool UTF-8 AXML (< 128 octets), les 2 octets précédents sont [charLen, byteLen]
                 data[idx8 - 2] = safeVal.length.toByte()
                 data[idx8 - 1] = repUtf8.size.toByte()
             }
-            for (i in searchUtf8.indices) {
+            for (i in 0 until searchUtf8.size) {
                 data[idx8 + i] = if (i < repUtf8.size) repUtf8[i] else 0
             }
             idx8 = indexOfBytes(data, searchUtf8, idx8 + searchUtf8.size)
@@ -106,13 +113,22 @@ object LocalArtifactBuilder {
         return -1
     }
 
+    /**
+     * Garantit un nom de package Android 100% valide (ex: com.webview.monapp).
+     * Android refuse d'installer un APK si un segment commence par un chiffre ou contient des caractères spéciaux.
+     */
     private fun sanitizePackageName(rawPkg: String, appName: String): String {
-        val cleaned = rawPkg.trim().lowercase().replace(Regex("[^a-z0-9_.]"), "")
-        if (cleaned.contains(".") && cleaned.first().isLetter()) {
-            return cleaned
+        val rawSegments = rawPkg.trim().lowercase().split(".")
+            .map { it.replace(Regex("[^a-z0-9_]"), "") }
+            .filter { it.isNotEmpty() }
+            .map { seg -> if (seg.first().isDigit()) "app_$seg" else seg }
+
+        if (rawSegments.size >= 2) {
+            return rawSegments.joinToString(".")
         }
         val slug = appName.lowercase().replace(Regex("[^a-z0-9]"), "").ifBlank { "monapp" }
-        return "com.webview.$slug"
+        val safeSlug = if (slug.first().isDigit()) "app$slug" else slug
+        return "com.webview.$safeSlug"
     }
 
     private fun writeStoredEntry(zipOut: ZipOutputStream, name: String, bytes: ByteArray) {
@@ -128,7 +144,7 @@ object LocalArtifactBuilder {
         zipOut.closeEntry()
     }
 
-    fun buildSignedWebViewApkOrBundle(context: Context, cfg: JSONObject, outSignedFile: File): Boolean {
+    fun buildSignedWebViewApkOrBundle(context: Context, cfg: JSONObject, outSignedFile: File): Int {
         val tempUnsigned = File(context.cacheDir, "temp_unsigned.apk")
         val baseApk = File(context.cacheDir, "template_base.apk")
 
@@ -140,13 +156,12 @@ object LocalArtifactBuilder {
         val userPkgName = sanitizePackageName(cfg.optString("packageName", ""), userAppName)
         val userVerName = cfg.optString("appVersion", "1.0.0").ifBlank { "1.0.0" }
 
-        // Lecture directe du fichier PNG sauvegardé par le sélecteur natif Kotlin
         val nativeIconFile = File(context.filesDir, "current_custom_icon.png")
         val customIconPng: ByteArray? = if (nativeIconFile.exists() && nativeIconFile.length() > 0) {
             nativeIconFile.readBytes()
         } else null
 
-        var iconReplaced = false
+        var replacedIconCount = 0
 
         ZipFile(baseApk).use { zipIn ->
             ZipOutputStream(FileOutputStream(tempUnsigned)).use { zipOut ->
@@ -168,20 +183,17 @@ object LocalArtifactBuilder {
                         continue
                     }
 
-                    // 2. Remplacement de toutes les occurrences de app_icon.png (drawable et mipmap)
-                    if (customIconPng != null && entry.name.endsWith("app_icon.png")) {
-                        if (entry.method == ZipEntry.STORED) {
-                            writeStoredEntry(zipOut, entry.name, customIconPng)
-                        } else {
-                            zipOut.putNextEntry(ZipEntry(entry.name))
-                            zipOut.write(customIconPng)
-                            zipOut.closeEntry()
-                        }
-                        iconReplaced = true
+                    // 2. Remplacement de TOUTES les icônes PNG dans res/ (quel que soit le nom généré par Gradle/AAPT2)
+                    val isTemplateIcon = entry.name.endsWith("app_icon.png") ||
+                            (entry.name.startsWith("res/") && entry.name.endsWith(".png") && !entry.name.contains(".9.png"))
+
+                    if (customIconPng != null && isTemplateIcon) {
+                        writeStoredEntry(zipOut, entry.name, customIconPng)
+                        replacedIconCount++
                         continue
                     }
 
-                    // 3. Copie standard des autres entrées
+                    // 3. Copie des autres fichiers
                     if (entry.method == ZipEntry.STORED) {
                         writeStoredEntry(zipOut, entry.name, entryBytes)
                     } else {
@@ -196,7 +208,7 @@ object LocalArtifactBuilder {
                 zipOut.write(cfg.toString(2).toByteArray(Charsets.UTF_8))
                 zipOut.closeEntry()
 
-                // Injection de l'icône personnalisée dans assets/custom_icon.png pour le Splash Screen
+                // Injection de l'icône personnalisée dans assets/custom_icon.png
                 if (customIconPng != null) {
                     zipOut.putNextEntry(ZipEntry("assets/custom_icon.png"))
                     zipOut.write(customIconPng)
@@ -213,18 +225,21 @@ object LocalArtifactBuilder {
             }
         }
 
+        // Signature V1 + V2 + V3 complète compatible avec toutes les versions d'Android (7 à 15)
         val (privKey, cert) = ensureKeyAndCert()
         val signerConfig = ApkSigner.SignerConfig.Builder("LOCAL_KEY", privKey, listOf(cert)).build()
         ApkSigner.Builder(listOf(signerConfig))
             .setInputApk(tempUnsigned)
             .setOutputApk(outSignedFile)
+            .setMinSdkVersion(24)
             .setV1SigningEnabled(true)
             .setV2SigningEnabled(true)
+            .setV3SigningEnabled(true)
             .build()
             .sign()
 
         tempUnsigned.delete()
-        return iconReplaced
+        return replacedIconCount
     }
 
     fun buildAndroidStudioZip(cfg: JSONObject, outZipFile: File) {

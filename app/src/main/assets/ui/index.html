@@ -602,21 +602,24 @@
     document.getElementById('keyStatusSub').innerText = "Votre fichier .jks local sera utilisé pour signer l'APK.";
   }
 
-  // NATIVE ANDROID ICON PICKER (Garantit à 100% que le logo est lu et stocké en PNG par Kotlin)
   function pickAppIcon() {
     if (window.AndroidBridge && window.AndroidBridge.pickAppIconNative) {
       window.AndroidBridge.pickAppIconNative();
     }
   }
 
-  // Appelé directement par Kotlin dès que l'utilisateur a choisi son logo dans la galerie
-  window.onNativeIconPicked = function(dataUri) {
+  window.onNativeIconPicked = function() {
     state.hasCustomIcon = true;
-    const thumb = document.getElementById('btnIconThumb');
-    thumb.src = dataUri;
-    thumb.style.display = 'inline-block';
+    if (window.AndroidBridge && window.AndroidBridge.getCustomIconDataUri) {
+      const dataUri = window.AndroidBridge.getCustomIconDataUri();
+      if (dataUri) {
+        const thumb = document.getElementById('btnIconThumb');
+        thumb.src = dataUri;
+        thumb.style.display = 'inline-block';
+        document.getElementById('splashIconHolder').innerHTML = `<img src="${dataUri}">`;
+      }
+    }
     document.getElementById('iconBtnLabel').innerText = "Icône prête ✓";
-    document.getElementById('splashIconHolder').innerHTML = `<img src="${dataUri}">`;
   };
 
   function pickLocalFolder() {
@@ -744,12 +747,12 @@
 
   function showGuide() {
     closeModal('modalDropdown');
-    alert("1. Remplissez l'URL, le Nom de l'app, le Nom du package et cliquez sur Importer l'icône.\n2. Si vous régénérez une app déjà installée, changez le Nom du package ou désinstallez l'ancienne version pour qu'Android rafraîchisse le cache de l'icône.");
+    alert("1. Remplissez l'URL, le Nom de l'app, le Nom du package et cliquez sur Importer l'icône.\n2. Si vous aviez déjà installé une ancienne version avec le même package, désinstallez-la avant d'installer la nouvelle.");
   }
 
   function showAbout() {
     closeModal('modalDropdown');
-    alert("ApkCreator Local Edition v1.2.0\nSélecteur d'icône natif Kotlin + Patch binaire AXML • 100% Local • Sans crédits.");
+    alert("ApkCreator Local Edition v1.3.0\nZipAlign 4-byte + AXML StringPool Patcher + Signature V1/V2/V3.");
   }
 
   function generateProjectOutput() {
